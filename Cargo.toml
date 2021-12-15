@@ -1,0 +1,24 @@
+[package]
+name = "online-bayes-learner"
+version = "0.0.1"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["rocksdb", "postcard"]
+
+[dependencies]
+serde = { version = "^1", features = ["derive"] }
+postcard = { version = "^0.7", optional = true, features = ["use-std"], default-features = false }
+hyperloglogplus = { version = "*", features = ["const-loop"] }
+thiserror = "^1"
+
+[dependencies.rocksdb]
+git = "https://github.com/rust-rocksdb/rust-rocksdb.git"
+default-features = false
+optional = true
+features = ["zstd"]
+
+[dev-dependencies]
+tempfile = "^3"
+
