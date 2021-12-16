@@ -138,6 +138,46 @@ where
         self.params.smooth_factor = f;
         self
     }
+    /// Initialize Model with features
+    pub fn initialize(&mut self, feature_and_tf_counts: Vec<(F, (i32, i32))>) -> Result<(), BinaryModelError> {
+        let key = Key::<F, T>::TFCount;
+        let last_total_tf_count: (i32, i32) = self
+            .store
+            .get(&key)?
+            .map(|v: Value| v.try_into())
+            .transpose()?
+            .unwrap_or((0, 0));
+        let (total_true_count, total_false_count) = feature_and_tf_counts.iter().fold(last_total_tf_count, |agg, (_, (t, f))| (agg.0 + t, agg.1 + f));
+        self.store.put(&key, &Value::TFCount(total_true_count, total_false_count))?;
+        let key = Key::<F, T>::FeaturesHllp;
+        let (mut features_hllp, _): (Hllp, i32) = self
+            .store
+            .get(&key)?
+            .map(|v: Value| v.try_into())
+            .transpose()?
+            .unwrap_or_else(|| (Hllp::new(16, HasherBuilder).unwrap(), 1));
+        for (feature, _) in feature_and_tf_counts.iter() {
+            features_hllp.insert(SerializerImpl::to_vec(&feature)?.as_slice());
+        }
+        let features_distinct_count = features_hllp.count();
+        self.store.put(&key, &Value::FeaturesHllp(features_hllp, features_distinct_count as i32))?;
+        for (feature, (t, f)) in feature_and_tf_counts.iter() {
+            let key = Key::<F, T>::TFCountByFeature(Cow::Borrowed(feature));
+            let (last_feat_true_count, last_feat_false_count): (i32, i32) = self
+                .store
+                .get(&key)?
+                .map(|v: Value| v.try_into())
+                .transpose()?
+                .unwrap_or((0, 0));
+            let (feat_true_count, feat_false_count) = (
+                last_feat_true_count + t,
+                last_feat_false_count + f,
+            );
+            self.store
+                .put(&key, &Value::TFCount(feat_true_count, feat_false_count))?;
+        }
+        Ok(())
+    }
     /// Trains the model with features and label
     pub fn train(&mut self, target: T, features: Vec<F>, label: bool) -> Result<(), BinaryModelError> {
         let key = Key::<F, T>::TFCount;
@@ -363,6 +403,30 @@ where
 #[cfg(test)]
 mod tests {
     use crate::BinaryModel;
+    #[test]
+    fn it_initializes_with_features_counts() {
+        let data = vec![
+            ("을".to_string(), (3, 0)),
+            ("고".to_string(), (0, 10)),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut model = BinaryModel::<String, String>::new(dir.path()).unwrap();
+        model.initialize(data).unwrap();
+        assert_eq!(
+            model
+                .true_probability(vec!["을", "을", "이"].iter().map(|t| t.to_string()).collect())
+                .unwrap(),
+            0.9877195959523788
+        );
+        assert_eq!(
+            model
+                .true_probability(vec!["을", "을", "이", "고", "고", "고", "가"].iter().map(|t| t.to_string()).collect())
+                .unwrap(),
+            0.6672077740638137
+        );
+
+    }
     #[test]
     fn it_trains() {
         let data = vec![
